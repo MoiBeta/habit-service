@@ -1,0 +1,73 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Habit {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+
+  priority    Int      @default(100)
+
+  userId      String   // 🔥 referencia lógica, no relación
+
+  entries     HabitEntry[]
+  subTasks    SubTask[]
+  reminders   Reminder[]
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId, priority])
+}
+
+model SubTask {
+  id        String   @id @default(uuid())
+  title     String
+
+  habitId   String
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Reminder {
+  id          String   @id @default(uuid())
+  timeMinutes Int
+  enabled     Boolean  @default(true)
+
+  habitId     String
+  habit       Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+}
+
+model HabitEntry {
+  id          String   @id @default(uuid())
+  date        DateTime
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+
+  habitId     String
+  habit       Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  subTasks    EntrySubTask[]
+
+  createdAt   DateTime @default(now())
+
+  @@unique([habitId, date])
+}
+
+model EntrySubTask {
+  id              String   @id @default(uuid())
+  title           String
+  completed       Boolean  @default(false)
+  sourceSubTaskId String?
+
+  entryId         String
+  entry           HabitEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime @default(now())
+}
