@@ -8,13 +8,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { UpdateHabitDto } from './dto/update-habit.dto';
 import { CreateHabitDto } from './dto/create-habit.dto';
+import {
+  HabitResponseDto,
+  TaskFrequency,
+} from './dto/habit.response.dto';
+import { SubTaskResponseDto } from './dto/subtask.response.dto';
 
 @Injectable()
 export class HabitsService {
   constructor(
     private prisma: PrismaService,
     private usersService: UsersService,
-  ) {}
+  ) { }
 
   async createHabit(userId: string, dto: CreateHabitDto) {
     await this.usersService.validateUser(userId);
@@ -28,7 +33,7 @@ export class HabitsService {
       priority = (maxPriority._max.priority || 0) + 100;
     }
 
-    return this.prisma.habit.create({
+    const habit = await this.prisma.habit.create({
       data: {
         name: dto.name,
         description: dto.description,
@@ -36,16 +41,16 @@ export class HabitsService {
         userId,
         subTasks: dto.subTasks
           ? {
-              create: dto.subTasks.map((sub) => ({ title: sub.title })),
-            }
+            create: dto.subTasks.map((sub) => ({ title: sub.title })),
+          }
           : undefined,
         reminders: dto.reminder
           ? {
-              create: {
-                timeMinutes: dto.reminder.timeMinutes,
-                enabled: dto.reminder.enabled ?? true,
-              },
-            }
+            create: {
+              timeMinutes: dto.reminder.timeMinutes,
+              enabled: dto.reminder.enabled ?? true,
+            },
+          }
           : undefined,
       },
       include: {
@@ -53,14 +58,35 @@ export class HabitsService {
         reminders: true,
       },
     });
+
+    const today = this.normalizeDate(new Date());
+    const entry = await this.prisma.habitEntry.create({
+      data: {
+        habitId: habit.id,
+        date: today,
+        completed: false,
+        subTasks: habit.subTasks.length > 0
+          ? {
+            create: habit.subTasks.map((st) => ({
+              title: st.title,
+              completed: false,
+              sourceSubTaskId: st.id,
+            })),
+          }
+          : undefined,
+      },
+      include: { subTasks: true },
+    });
+
+    return this.mapHabitToResponse(habit, entry);
   }
 
-  async getHabits(userId: string, date?: Date) {
+  async getHabits(userId: string, date?: Date): Promise<HabitResponseDto[]> {
     const targetDate = date
       ? this.normalizeDate(date)
       : this.normalizeDate(new Date());
 
-    return this.prisma.habit.findMany({
+    const habits = await this.prisma.habit.findMany({
       where: { userId },
       include: {
         entries: {
@@ -74,9 +100,18 @@ export class HabitsService {
         priority: 'asc',
       },
     });
+
+    return habits.map((habit) => {
+      const entry = habit.entries[0];
+      return this.mapHabitToResponse(habit, entry);
+    });
   }
 
-  async toggleHabit(userId: string, habitId: string, date?: Date) {
+  async toggleHabit(
+    userId: string,
+    habitId: string,
+    date?: Date,
+  ): Promise<HabitResponseDto> {
     const targetDate = date
       ? this.normalizeDate(date)
       : this.normalizeDate(new Date());
@@ -100,28 +135,35 @@ export class HabitsService {
 
     const existingEntry = await this.prisma.habitEntry.findUnique({
       where: { habitId_date: { habitId, date: targetDate } },
+      include: { subTasks: true },
     });
+
+    let updatedEntry;
 
     if (existingEntry) {
       const nextCompleted = !existingEntry.completed;
 
-      return this.prisma.habitEntry.update({
+      updatedEntry = await this.prisma.habitEntry.update({
         where: { id: existingEntry.id },
         data: {
           completed: nextCompleted,
           completedAt: nextCompleted ? new Date() : null,
         },
+        include: { subTasks: true },
+      });
+    } else {
+      updatedEntry = await this.prisma.habitEntry.create({
+        data: {
+          habitId,
+          date: targetDate,
+          completed: true,
+          completedAt: new Date(),
+        },
+        include: { subTasks: true },
       });
     }
 
-    return this.prisma.habitEntry.create({
-      data: {
-        habitId,
-        date: targetDate,
-        completed: true,
-        completedAt: new Date(),
-      },
-    });
+    return this.mapHabitToResponse(habit, updatedEntry);
   }
 
   async toggleSubTask(
@@ -129,7 +171,7 @@ export class HabitsService {
     habitId: string,
     subtaskId: string,
     entryId?: string,
-  ) {
+  ): Promise<HabitResponseDto> {
     await this.validateOwnership(userId, habitId);
 
     const habit = await this.prisma.habit.findUnique({
@@ -219,7 +261,7 @@ export class HabitsService {
       updatedSubTasks.length > 0 &&
       updatedSubTasks.every((subtask) => subtask.completed);
 
-    return this.prisma.habitEntry.update({
+    const updatedEntry = await this.prisma.habitEntry.update({
       where: { id: entry.id },
       data: {
         completed: allCompleted,
@@ -227,19 +269,24 @@ export class HabitsService {
       },
       include: { subTasks: true },
     });
+
+    return this.mapHabitToResponse(habit, updatedEntry);
   }
 
   async updateHabit(userId: string, habitId: string, dto: UpdateHabitDto) {
     await this.validateOwnership(userId, habitId);
 
-    return this.prisma.habit.update({
+    const updated = await this.prisma.habit.update({
       where: { id: habitId },
       data: {
         name: dto.name,
         description: dto.description,
         priority: dto.priority,
       },
+      include: { subTasks: true },
     });
+
+    return this.mapHabitToResponse(updated);
   }
 
   async deleteHabit(userId: string, habitId: string) {
@@ -260,6 +307,34 @@ export class HabitsService {
     }
 
     return habit;
+  }
+
+  private mapHabitToResponse(
+    habit: any,
+    entry?: any,
+  ): HabitResponseDto {
+    return {
+      id: habit.id,
+      userId: habit.userId,
+      title: habit.name,
+      description: habit.description,
+      startDate: entry?.date || new Date(),
+      subtasks: entry?.subTasks
+        ? entry.subTasks.map((st: any) => {
+          const subtask = new SubTaskResponseDto();
+          subtask.id = st.id;
+          subtask.title = st.title;
+          subtask.completed = st.completed;
+          return subtask;
+        })
+        : [],
+      completed: entry?.completed || false,
+      completedAt: entry?.completedAt,
+      templateId: habit.id,
+      instanceId: entry?.id || '',
+      taskFrequency: TaskFrequency.DAILY, // Valor por defecto
+      priority: habit.priority,
+    };
   }
 
   normalizeDate(date: Date) {
