@@ -169,8 +169,8 @@ export class HabitsService {
   async toggleSubTask(
     userId: string,
     habitId: string,
-    subtaskId: string,
-    entryId?: string,
+    sourceSubTaskId: string,
+    date?: Date,
   ): Promise<HabitResponseDto> {
     await this.validateOwnership(userId, habitId);
 
@@ -190,68 +190,62 @@ export class HabitsService {
     }
 
     const sourceSubTask = habit.subTasks.find(
-      (subtask) => subtask.id === subtaskId,
+      (subtask) => subtask.id === sourceSubTaskId,
     );
     if (!sourceSubTask) {
       throw new NotFoundException('Subtask not found in this habit');
     }
 
-    let entry;
+    const targetDate = date ? this.normalizeDate(date) : this.normalizeDate(new Date());
 
-    if (entryId) {
-      entry = await this.prisma.habitEntry.findFirst({
-        where: { id: entryId, habitId },
-        include: { subTasks: true },
-      });
+    let entry = await this.prisma.habitEntry.findUnique({
+      where: { habitId_date: { habitId, date: targetDate } },
+      include: { subTasks: true },
+    });
 
-      if (!entry) {
-        throw new NotFoundException('Habit entry not found');
-      }
-    } else {
-      const today = this.normalizeDate(new Date());
-
-      entry = await this.prisma.habitEntry.findUnique({
-        where: { habitId_date: { habitId, date: today } },
-        include: { subTasks: true },
-      });
-
-      if (!entry) {
-        entry = await this.prisma.habitEntry.create({
-          data: {
-            habitId,
-            date: today,
-            completed: false,
-            subTasks: {
-              create: habit.subTasks.map((subtask) => ({
-                title: subtask.title,
-                completed: false,
-                sourceSubTaskId: subtask.id,
-              })),
-            },
+    if (!entry) {
+      entry = await this.prisma.habitEntry.create({
+        data: {
+          habitId,
+          date: targetDate,
+          completed: false,
+          subTasks: {
+            create: habit.subTasks.map((subtask) => ({
+              title: subtask.title,
+              completed: false,
+              sourceSubTaskId: subtask.id,
+            })),
           },
-          include: { subTasks: true },
-        });
-      }
+        },
+        include: { subTasks: true },
+      });
     }
 
-    const entrySubTask =
-      entry.subTasks.find((subtask) => subtask.sourceSubTaskId === subtaskId) ??
+    let entrySubTask =
+      entry.subTasks.find((subtask) => subtask.sourceSubTaskId === sourceSubTaskId) ??
       entry.subTasks.find(
         (subtask) =>
           !subtask.sourceSubTaskId && subtask.title === sourceSubTask.title,
       );
 
     if (!entrySubTask) {
-      throw new NotFoundException('Subtask not found in this entry');
+      entrySubTask = await this.prisma.entrySubTask.create({
+        data: {
+          entryId: entry.id,
+          title: sourceSubTask.title,
+          completed: true,
+          sourceSubTaskId: sourceSubTask.id,
+        },
+      });
+    } else {
+      await this.prisma.entrySubTask.update({
+        where: { id: entrySubTask.id },
+        data: {
+          completed: !entrySubTask.completed,
+          sourceSubTaskId: entrySubTask.sourceSubTaskId ?? sourceSubTask.id,
+        },
+      });
     }
-
-    await this.prisma.entrySubTask.update({
-      where: { id: entrySubTask.id },
-      data: {
-        completed: !entrySubTask.completed,
-        sourceSubTaskId: entrySubTask.sourceSubTaskId ?? sourceSubTask.id,
-      },
-    });
 
     const updatedSubTasks = await this.prisma.entrySubTask.findMany({
       where: { entryId: entry.id },
@@ -325,6 +319,7 @@ export class HabitsService {
           subtask.id = st.id;
           subtask.title = st.title;
           subtask.completed = st.completed;
+          subtask.sourceSubTaskId = st.sourceSubTaskId ?? undefined;
           return subtask;
         })
         : [],

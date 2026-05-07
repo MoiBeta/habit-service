@@ -66,20 +66,26 @@ export class HabitsController {
     return this.habitsService.toggleHabit(userId, habitId);
   }
 
-  @Post(':habitId/subtasks/:subtaskId/toggle')
+  @Post(':habitId/subtasks/:sourceSubTaskId/toggle')
   @ApiOperation({ summary: 'Alternar subtarea' })
+  @ApiQuery({
+    name: 'date',
+    required: false,
+    description: 'Fecha para buscar/crear el entry en formato ISO. Si no se envía, se usa la fecha actual.',
+  })
   toggleSubTask(
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('habitId') habitId: string,
-    @Param('subtaskId') subtaskId: string,
-    @Query('entryId') entryId?: string,
+    @Param('sourceSubTaskId') sourceSubTaskId: string,
+    @Query('date') date?: string,
   ) {
     const userId = req.user.id;
+    const parsedDate = date ? new Date(date) : undefined;
     return this.habitsService.toggleSubTask(
       userId,
       habitId,
-      subtaskId,
-      entryId,
+      sourceSubTaskId,
+      parsedDate,
     );
   }
 
