@@ -8,6 +8,7 @@ import {
   IsString,
   MaxLength,
   ValidateNested,
+  IsDateString,
 } from 'class-validator';
 import { CreateReminderDto } from './create-reminder.dto';
 import { CreateSubTaskDto } from './create-sub-task.dto';
@@ -21,7 +22,7 @@ export class CreateHabitDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  name: string;
+  name: string = '';
 
   @ApiPropertyOptional({
     example: 'Hacer ejercicio por 30 minutos',
@@ -59,4 +60,12 @@ export class CreateHabitDto {
   @ValidateNested()
   @Type(() => CreateReminderDto)
   reminder?: CreateReminderDto;
+
+  @ApiPropertyOptional({
+    example: '2026-05-26T00:00:00.000Z',
+    description: 'Fecha ISO para crear el entry que indica desde cuándo comenzar a mostrar el hábito',
+  })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 }

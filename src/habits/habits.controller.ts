@@ -36,10 +36,9 @@ export class HabitsController {
   createHabit(
     @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: CreateHabitDto,
-    @Query('date') date?: string,
   ) {
     const userId = req.user.id;
-    const parsedDate = date ? new Date(date) : undefined;
+    const parsedDate = dto.date ? new Date(dto.date) : undefined;
     return this.habitsService.createHabit(userId, dto, parsedDate);
   }
 
