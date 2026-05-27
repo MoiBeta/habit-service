@@ -27,12 +27,20 @@ export class HabitsController {
 
   @Post()
   @ApiOperation({ summary: 'Crear hábito' })
+  @ApiQuery({
+    name: 'date',
+    required: false,
+    description: 'Fecha del hábito en formato ISO. Si no se envía, se usa la fecha actual.',
+    example: '2026-05-26T00:00:00.000Z',
+  })
   createHabit(
     @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: CreateHabitDto,
+    @Query('date') date?: string,
   ) {
     const userId = req.user.id;
-    return this.habitsService.createHabit(userId, dto);
+    const parsedDate = date ? new Date(date) : undefined;
+    return this.habitsService.createHabit(userId, dto, parsedDate);
   }
 
   @Get()
@@ -54,16 +62,18 @@ export class HabitsController {
   @Post(':id/toggle')
   @ApiOperation({ summary: 'Alternar hábito' })
   @ApiQuery({
-    name: 'entryId',
+    name: 'date',
     required: false,
-    description: 'Entry existente del hábito. Si no se envía, usa o crea la del día actual.',
+    description: 'Fecha para el entry del hábito en formato ISO. Si no se envía, se usa la fecha actual.',
   })
   toggleHabit(
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('id') habitId: string,
+    @Query('date') date?: string,
   ) {
     const userId = req.user.id;
-    return this.habitsService.toggleHabit(userId, habitId);
+    const parsedDate = date ? new Date(date) : undefined;
+    return this.habitsService.toggleHabit(userId, habitId, parsedDate);
   }
 
   @Post(':habitId/subtasks/:sourceSubTaskId/toggle')

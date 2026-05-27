@@ -21,7 +21,7 @@ export class HabitsService {
     private usersService: UsersService,
   ) { }
 
-  async createHabit(userId: string, dto: CreateHabitDto) {
+  async createHabit(userId: string, dto: CreateHabitDto, date?: Date) {
     await this.usersService.validateUser(userId);
 
     let priority = dto.priority;
@@ -59,11 +59,13 @@ export class HabitsService {
       },
     });
 
-    const today = this.normalizeDate(new Date());
+    const targetDate = date
+      ? this.normalizeDate(date)
+      : this.normalizeDate(new Date());
     const entry = await this.prisma.habitEntry.create({
       data: {
         habitId: habit.id,
-        date: today,
+        date: targetDate,
         completed: false,
         subTasks: habit.subTasks.length > 0
           ? {
