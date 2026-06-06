@@ -105,7 +105,19 @@ export class HabitsService {
 
     return habits.map((habit) => {
       const entry = habit.entries[0];
-      return this.mapHabitToResponse(habit, entry);
+      const entryForResponse = entry ?? {
+        id: '',
+        date: targetDate,
+        completed: false,
+        completedAt: null,
+        subTasks: habit.subTasks.map((st: any) => ({
+          id: st.id,
+          title: st.title,
+          completed: false,
+          sourceSubTaskId: st.id,
+        })),
+      };
+      return this.mapHabitToResponse(habit, entryForResponse);
     });
   }
 
@@ -128,6 +140,8 @@ export class HabitsService {
     if (!habit) {
       throw new NotFoundException();
     }
+
+    console.log('Subtasks:', habit.subTasks.length);
 
     if (habit.subTasks.length > 0) {
       throw new BadRequestException(
@@ -309,18 +323,21 @@ export class HabitsService {
     habit: any,
     entry?: any,
   ): HabitResponseDto {
+    const subtasksSource =
+      entry?.subTasks?.length > 0 ? entry.subTasks : habit.subTasks;
+
     return {
       id: habit.id,
       userId: habit.userId,
       title: habit.name,
       description: habit.description,
       startDate: entry?.date || new Date(),
-      subtasks: entry?.subTasks
-        ? entry.subTasks.map((st: any) => {
+      subtasks: subtasksSource
+        ? subtasksSource.map((st: any) => {
           const subtask = new SubTaskResponseDto();
           subtask.id = st.id;
           subtask.title = st.title;
-          subtask.completed = st.completed;
+          subtask.completed = st.completed ?? false;
           subtask.sourceSubTaskId = st.sourceSubTaskId ?? undefined;
           return subtask;
         })
