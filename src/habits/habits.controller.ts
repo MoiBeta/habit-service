@@ -27,12 +27,6 @@ export class HabitsController {
 
   @Post()
   @ApiOperation({ summary: 'Crear hábito' })
-  @ApiQuery({
-    name: 'date',
-    required: false,
-    description: 'Fecha del hábito en formato ISO. Si no se envía, se usa la fecha actual.',
-    example: '2026-05-26T00:00:00.000Z',
-  })
   createHabit(
     @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: CreateHabitDto,

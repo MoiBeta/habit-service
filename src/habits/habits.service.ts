@@ -286,17 +286,73 @@ export class HabitsService {
   async updateHabit(userId: string, habitId: string, dto: UpdateHabitDto) {
     await this.validateOwnership(userId, habitId);
 
+    const habitData: {
+      name?: string;
+      description?: string | null;
+      priority?: number;
+    } = {
+      name: dto.name,
+      description: dto.description,
+      priority: dto.priority,
+    };
+
     const updated = await this.prisma.habit.update({
       where: { id: habitId },
-      data: {
-        name: dto.name,
-        description: dto.description,
-        priority: dto.priority,
+      data: habitData,
+      include: {
+        subTasks: true,
+        reminders: true,
       },
-      include: { subTasks: true },
     });
 
-    return this.mapHabitToResponse(updated);
+    if (dto.subTasks !== undefined) {
+      await this.prisma.subTask.deleteMany({
+        where: { habitId },
+      });
+
+      if (dto.subTasks.length > 0) {
+        await this.prisma.subTask.createMany({
+          data: dto.subTasks.map((st) => ({
+            habitId,
+            title: st.title,
+          })),
+        });
+      }
+    }
+
+    if (dto.reminder !== undefined) {
+      const existingReminder = await this.prisma.reminder.findFirst({
+        where: { habitId },
+      });
+
+      if (existingReminder) {
+        await this.prisma.reminder.update({
+          where: { id: existingReminder.id },
+          data: {
+            timeMinutes: dto.reminder.timeMinutes,
+            enabled: dto.reminder.enabled ?? true,
+          },
+        });
+      } else {
+        await this.prisma.reminder.create({
+          data: {
+            habitId,
+            timeMinutes: dto.reminder.timeMinutes,
+            enabled: dto.reminder.enabled ?? true,
+          },
+        });
+      }
+    }
+
+    const finalHabit = await this.prisma.habit.findUniqueOrThrow({
+      where: { id: habitId },
+      include: {
+        subTasks: true,
+        reminders: true,
+      },
+    });
+
+    return this.mapHabitToResponse(finalHabit);
   }
 
   async deleteHabit(userId: string, habitId: string) {

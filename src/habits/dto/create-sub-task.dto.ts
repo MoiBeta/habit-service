@@ -10,5 +10,5 @@ export class CreateSubTaskDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  title: string;
+  title: string = '';
 }
