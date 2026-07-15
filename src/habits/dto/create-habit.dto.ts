@@ -9,9 +9,11 @@ import {
   MaxLength,
   ValidateNested,
   IsDateString,
+  IsEnum,
 } from 'class-validator';
 import { CreateReminderDto } from './create-reminder.dto';
 import { CreateSubTaskDto } from './create-sub-task.dto';
+import { TaskFrequency } from './habit.response.dto';
 
 export class CreateHabitDto {
   @ApiProperty({
@@ -41,6 +43,15 @@ export class CreateHabitDto {
   @IsOptional()
   @IsNumber()
   priority?: number;
+
+  @ApiPropertyOptional({
+    enum: TaskFrequency,
+    example: TaskFrequency.DAILY,
+    description: 'Frecuencia del habito: DAILY, WEEKLY, MONTHLY, YEARLY',
+  })
+  @IsOptional()
+  @IsEnum(TaskFrequency)
+  frequency?: TaskFrequency = TaskFrequency.DAILY;
 
   @ApiPropertyOptional({
     type: () => [CreateSubTaskDto],
