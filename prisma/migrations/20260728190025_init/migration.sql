@@ -49,6 +49,7 @@ CREATE TABLE "EntrySubTask" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "completed" BOOLEAN NOT NULL DEFAULT false,
+    "orderId" INTEGER NOT NULL DEFAULT 0,
     "sourceSubTaskId" TEXT,
     "entryId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
