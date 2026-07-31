@@ -566,8 +566,9 @@ export class HabitsService {
     habit: any,
     entry?: any,
   ): HabitResponseDto {
+    const useEntrySubTasks = entry?.subTasks?.length > 0;
     const subtasksSource = this.sortSubTasks(
-      entry?.subTasks?.length > 0 ? entry.subTasks : habit.subTasks,
+      useEntrySubTasks ? entry.subTasks : habit.subTasks,
     );
 
     return {
@@ -582,7 +583,11 @@ export class HabitsService {
           subtask.id = st.id;
           subtask.title = st.title;
           subtask.completed = st.completed ?? false;
-          subtask.sourceSubTaskId = st.sourceSubTaskId ?? undefined;
+          // When subtasks come from the template (habit.subTasks), st.id IS the sourceSubTaskId.
+          // When they come from an entry (EntrySubTask), sourceSubTaskId is an explicit field.
+          subtask.sourceSubTaskId = useEntrySubTasks
+            ? (st.sourceSubTaskId ?? st.id)
+            : st.id;
           return subtask;
         })
         : [],
