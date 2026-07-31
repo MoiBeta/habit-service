@@ -218,10 +218,10 @@ export class HabitsService {
     return this.mapHabitToResponse(habit, updatedEntry);
   }
 
-  async toggleSubTask(
+  async syncSubtasks(
     userId: string,
     habitId: string,
-    sourceSubTaskId: string,
+    dto: { subtasks: Array<{ sourceSubTaskId: string; completed: boolean }> },
     date?: Date,
   ): Promise<HabitResponseDto> {
     await this.validateOwnership(userId, habitId);
@@ -235,26 +235,17 @@ export class HabitsService {
       throw new NotFoundException('Habit not found');
     }
 
-    if (habit.subTasks.length === 0) {
-      throw new BadRequestException(
-        'This habit has no subtasks. Use toggleHabit instead.',
-      );
-    }
+    const targetDate = date
+      ? this.normalizeDate(new Date(date))
+      : this.normalizeDate(new Date());
 
-    const sourceSubTask = habit.subTasks.find(
-      (subtask) => subtask.id === sourceSubTaskId,
-    );
-    if (!sourceSubTask) {
-      throw new NotFoundException('Subtask not found in this habit');
-    }
-
-    const targetDate = date ? this.normalizeDate(new Date(date)) : this.normalizeDate(new Date());
     const searchDate = this.getSearchDateForFrequency(
       habit.frequency,
       habit.createdAt,
       targetDate,
     );
 
+    // Find or create the entry for this date
     let entry = await this.prisma.habitEntry.findUnique({
       where: { habitId_date: { habitId, date: searchDate } },
       include: { subTasks: true },
@@ -267,7 +258,7 @@ export class HabitsService {
           date: searchDate,
           completed: false,
           subTasks: {
-            create: habit.subTasks.map((subtask, index) => ({
+            create: habit.subTasks.map((subtask: any, index: number) => ({
               title: subtask.title,
               completed: false,
               sourceSubTaskId: subtask.id,
@@ -279,33 +270,37 @@ export class HabitsService {
       });
     }
 
-    let entrySubTask =
-      entry.subTasks.find((subtask) => subtask.sourceSubTaskId === sourceSubTaskId) ??
-      entry.subTasks.find(
-        (subtask) =>
-          !subtask.sourceSubTaskId && subtask.title === sourceSubTask.title,
+    // Update each entry subtask based on the provided state
+    for (const subtaskState of dto.subtasks) {
+      const entrySubTask = entry.subTasks.find(
+        (es) => es.sourceSubTaskId === subtaskState.sourceSubTaskId,
       );
 
-    if (!entrySubTask) {
-      entrySubTask = await this.prisma.entrySubTask.create({
-        data: {
-          entryId: entry.id,
-          title: sourceSubTask.title,
-          completed: true,
-          orderId: this.getSubTaskOrderId(sourceSubTask as any, 0),
-          sourceSubTaskId: sourceSubTask.id,
-        },
-      });
-    } else {
-      await this.prisma.entrySubTask.update({
-        where: { id: entrySubTask.id },
-        data: {
-          completed: !entrySubTask.completed,
-          sourceSubTaskId: entrySubTask.sourceSubTaskId ?? sourceSubTask.id,
-        },
-      });
+      if (entrySubTask) {
+        await this.prisma.entrySubTask.update({
+          where: { id: entrySubTask.id },
+          data: { completed: subtaskState.completed },
+        });
+      } else {
+        // EntrySubTask doesn't exist yet, create it
+        const sourceSubTask = habit.subTasks.find(
+          (st: any) => st.id === subtaskState.sourceSubTaskId,
+        );
+        if (sourceSubTask) {
+          await this.prisma.entrySubTask.create({
+            data: {
+              entryId: entry.id,
+              title: sourceSubTask.title,
+              completed: subtaskState.completed,
+              sourceSubTaskId: sourceSubTask.id,
+              orderId: this.getSubTaskOrderId(sourceSubTask as any, 0),
+            },
+          });
+        }
+      }
     }
 
+    // Recalculate completion status
     const updatedSubTasks = await this.prisma.entrySubTask.findMany({
       where: { entryId: entry.id },
     });

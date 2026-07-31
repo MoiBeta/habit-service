@@ -13,6 +13,7 @@ import {
 import { HabitsService } from './habits.service';
 import { CreateHabitDto } from './dto/create-habit.dto';
 import { UpdateHabitDto } from './dto/update-habit.dto';
+import { SyncSubtasksDto } from './dto/sync-subtasks.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -69,27 +70,22 @@ export class HabitsController {
     return this.habitsService.toggleHabit(userId, habitId, parsedDate);
   }
 
-  @Post(':habitId/subtasks/:sourceSubTaskId/toggle')
-  @ApiOperation({ summary: 'Alternar subtarea' })
+  @Post(':habitId/subtasks/sync')
+  @ApiOperation({ summary: 'Sincronizar estado de subtareas' })
   @ApiQuery({
     name: 'date',
     required: false,
     description: 'Fecha para buscar/crear el entry en formato ISO. Si no se envía, se usa la fecha actual.',
   })
-  toggleSubTask(
+  syncSubtasks(
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('habitId') habitId: string,
-    @Param('sourceSubTaskId') sourceSubTaskId: string,
+    @Body() dto: SyncSubtasksDto,
     @Query('date') date?: string,
   ) {
     const userId = req.user.id;
     const parsedDate = date ? new Date(date) : undefined;
-    return this.habitsService.toggleSubTask(
-      userId,
-      habitId,
-      sourceSubTaskId,
-      parsedDate,
-    );
+    return this.habitsService.syncSubtasks(userId, habitId, dto, parsedDate);
   }
 
   @Patch(':id')
