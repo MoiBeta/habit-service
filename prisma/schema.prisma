@@ -75,3 +75,13 @@ model EntrySubTask {
 
   createdAt       DateTime @default(now())
 }
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  platform  String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
