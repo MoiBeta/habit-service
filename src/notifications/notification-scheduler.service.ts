@@ -26,7 +26,7 @@ export class NotificationSchedulerService {
   } {
     return {
       title: 'Recordatorio',
-      body: `Recordatorio: ${habit.name}`,
+      body: `${habit.name}`,
       data: { habitId: habit.id },
     };
   }
