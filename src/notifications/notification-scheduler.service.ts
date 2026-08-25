@@ -51,6 +51,8 @@ export class NotificationSchedulerService {
     const now = new Date();
     const currentMinute = this.computeCurrentMinuteUTC(now);
 
+    this.logger.debug(`Cron tick at minute ${currentMinute} (${now.toISOString()})`);
+
     // Get today's date at midnight UTC for HabitEntry comparison
     const todayStart = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
