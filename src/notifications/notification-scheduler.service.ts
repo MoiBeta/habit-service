@@ -135,9 +135,18 @@ export class NotificationSchedulerService {
             this.firebaseService
               .sendToDevice(deviceToken.token, payload)
               .then(async (result) => {
+                if (result.success) {
+                  this.logger.log(
+                    `Notification sent to user ${userId} for habit "${habit.name}"`,
+                  );
+                } else {
+                  this.logger.warn(
+                    `Failed to send notification to user ${userId} for habit "${habit.name}"`,
+                  );
+                }
                 if (result.tokenInvalid) {
                   this.logger.warn(
-                    `Invalid token detected, deleting: ${deviceToken.token}`,
+                    `Invalid token detected, deleting: ${deviceToken.token.substring(0, 20)}...`,
                   );
                   await this.devicesService.deleteToken(deviceToken.token);
                 }
