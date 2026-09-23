@@ -204,8 +204,13 @@ export class HabitsService {
         include: { subTasks: true },
       });
     } else {
-      updatedEntry = await this.prisma.habitEntry.create({
-        data: {
+      updatedEntry = await this.prisma.habitEntry.upsert({
+        where: { habitId_date: { habitId, date: searchDate } },
+        update: {
+          completed: true,
+          completedAt: new Date(),
+        },
+        create: {
           habitId,
           date: searchDate,
           completed: true,

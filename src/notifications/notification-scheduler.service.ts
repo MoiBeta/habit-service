@@ -3,6 +3,10 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { FirebaseService } from './firebase.service';
 import { DevicesService } from './devices.service';
+import {
+  getSearchDateForFrequency,
+  isHabitDueOnDate,
+} from '../habits/frequency.utils';
 
 @Injectable()
 export class NotificationSchedulerService {
@@ -26,7 +30,7 @@ export class NotificationSchedulerService {
   } {
     return {
       title: 'Recordatorio',
-      body: `${habit.name}`,
+      body: `Recordatorio: ${habit.name}`,
       data: { habitId: habit.id },
     };
   }
@@ -53,7 +57,7 @@ export class NotificationSchedulerService {
 
     this.logger.debug(`Cron tick at minute ${currentMinute} (${now.toISOString()})`);
 
-    // Get today's date at midnight UTC for HabitEntry comparison
+    // Today at midnight UTC — used for due-date checks
     const todayStart = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
@@ -74,25 +78,60 @@ export class NotificationSchedulerService {
     }
 
     this.logger.log(
-      `Found ${dueReminders.length} due reminder(s) at minute ${currentMinute}`,
+      `Found ${dueReminders.length} reminder(s) matching minute ${currentMinute}`,
     );
 
-    // Optimization 1: Batch query for completed habits (eliminates N+1)
-    const habitIds = dueReminders.map((r) => r.habit.id);
-    const completedEntries = await this.prisma.habitEntry.findMany({
-      where: {
-        habitId: { in: habitIds },
-        date: todayStart,
-        completed: true,
-      },
-      select: { habitId: true },
-    });
-    const completedHabitIds = new Set(
-      completedEntries.map((entry) => entry.habitId),
+    // --- FIX: filter out habits that are not due today based on their frequency ---
+    // A WEEKLY habit is only due on the same weekday it was created; a MONTHLY habit
+    // only on the same day-of-month; etc.  Without this check every reminder was firing
+    // every day regardless of frequency.
+    const frequencyDueReminders = dueReminders.filter((r) =>
+      isHabitDueOnDate(r.habit.frequency, r.habit.createdAt, todayStart),
     );
 
-    // Filter out reminders for habits already completed today
-    const pendingReminders = dueReminders.filter(
+    if (frequencyDueReminders.length === 0) {
+      this.logger.debug(
+        `No reminders are due today after frequency filtering`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `${frequencyDueReminders.length} reminder(s) due today after frequency check`,
+    );
+
+    // Batch query for completed entries — each habit may have a different entry date
+    // depending on its frequency, so we collect (habitId, entryDate) pairs and query
+    // all at once using an OR condition.
+    const habitEntryFilters = frequencyDueReminders.map((r) => ({
+      habitId: r.habit.id,
+      date: getSearchDateForFrequency(
+        r.habit.frequency,
+        r.habit.createdAt,
+        todayStart,
+      ),
+      completed: true as const,
+    }));
+
+    // Build a set of habitIds whose entry for *their* period date is already completed
+    const completedHabitIds = new Set<string>();
+    if (habitEntryFilters.length > 0) {
+      // Query each (habitId, date) pair; using OR keeps it a single round-trip
+      const completedEntries = await this.prisma.habitEntry.findMany({
+        where: {
+          OR: habitEntryFilters.map(({ habitId, date }) => ({
+            habitId,
+            date,
+            completed: true,
+          })),
+        },
+        select: { habitId: true },
+      });
+      completedEntries.forEach((e) => completedHabitIds.add(e.habitId));
+    }
+
+    // Filter out reminders for habits already completed in their current period
+    const pendingReminders = frequencyDueReminders.filter(
       (r) => !completedHabitIds.has(r.habit.id),
     );
 
