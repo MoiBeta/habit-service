@@ -25,8 +25,6 @@ RUN npm install --only=production
 
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
-COPY firebase-service-account.json ./firebase-service-account.json
-
 RUN npx prisma generate
 
 EXPOSE 3000
