@@ -6,19 +6,23 @@ import { lastValueFrom } from 'rxjs';
 @Injectable()
 export class UsersService {
     private authServiceUrl: string;
+    private internalApiKey: string;
 
     constructor(
         private http: HttpService,
         private config: ConfigService,
     ) {
         this.authServiceUrl = this.config.get('AUTH_SERVICE_URL') || 'http://auth-service:3000';
+        this.internalApiKey = this.config.getOrThrow<string>('INTERNAL_API_KEY');
     }
 
     async validateUser(userId: string) {
         try {
             const response = await lastValueFrom(
                 this.http
-                .get(`${this.authServiceUrl}/users/${userId}`),
+                .get(`${this.authServiceUrl}/users/${encodeURIComponent(userId)}`, {
+                    headers: { 'x-internal-api-key': this.internalApiKey },
+                }),
             );
             return response;
         } catch (error) {

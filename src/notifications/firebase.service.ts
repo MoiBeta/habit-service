@@ -56,7 +56,7 @@ export class FirebaseService implements OnModuleInit {
         return { success: false, tokenInvalid: true };
       }
       this.logger.error(
-        `Failed to send notification to token: ${token}`,
+        `Failed to send notification to token: ${token.substring(0, 20)}...`,
         error,
       );
       return { success: false };

@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -22,14 +21,6 @@ import { NotificationsModule } from './notifications/notifications.module';
     UsersModule,
     HabitsModule,
     NotificationsModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET') || 'default-secret-key',
-        signOptions: { expiresIn: '15m' },
-      }),
-    }),
   ],
   controllers: [AppController],
   providers: [AppService],
