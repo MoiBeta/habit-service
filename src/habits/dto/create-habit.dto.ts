@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 import { CreateReminderDto } from './create-reminder.dto';
 import { CreateSubTaskDto } from './create-sub-task.dto';
-import { TaskFrequency } from './habit.response.dto';
+import { TaskFrequency } from '../frequency.utils';
 
 export class CreateHabitDto {
   @ApiProperty({
@@ -24,7 +24,7 @@ export class CreateHabitDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  name: string = '';
+  name!: string;
 
   @ApiPropertyOptional({
     example: 'Hacer ejercicio por 30 minutos',
@@ -51,7 +51,7 @@ export class CreateHabitDto {
   })
   @IsOptional()
   @IsEnum(TaskFrequency)
-  frequency?: TaskFrequency = TaskFrequency.DAILY;
+  frequency?: TaskFrequency;
 
   @ApiPropertyOptional({
     type: () => [CreateSubTaskDto],

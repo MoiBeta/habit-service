@@ -26,4 +26,31 @@ describe('HabitsService', () => {
 
     expect(response.subtasks[0].sourceSubTaskId).toBe('entry-sub-1');
   });
+
+  it('returns only the active reminder', () => {
+    const service = new HabitsService({} as any, {} as any);
+    const habit = {
+      id: 'habit-1',
+      userId: 'user-1',
+      name: 'Test habit',
+      frequency: 'DAILY',
+      priority: 100,
+      subTasks: [],
+    };
+
+    const withReminder = (service as any).mapHabitToResponse({
+      ...habit,
+      reminders: [{ timeMinutes: 1215, utcOffsetMinutes: -300, enabled: true }],
+    });
+    expect(withReminder.reminder).toEqual({
+      timeMinutes: 1215,
+      utcOffsetMinutes: -300,
+    });
+
+    const disabled = (service as any).mapHabitToResponse({
+      ...habit,
+      reminders: [{ timeMinutes: 1215, utcOffsetMinutes: -300, enabled: false }],
+    });
+    expect(disabled.reminder).toBeNull();
+  });
 });

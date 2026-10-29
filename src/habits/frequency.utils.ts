@@ -40,13 +40,18 @@ export function getSearchDateForFrequency(
 
 /**
  * Returns true only when targetDate is the day this habit is due,
- * given its frequency and creation date.
+ * given its frequency and creation date. A habit is never due before the
+ * day it starts.
  */
 export function isHabitDueOnDate(
   frequency: string,
   habitCreatedAt: Date,
   targetDate: Date,
 ): boolean {
+  if (normalizeDate(targetDate) < normalizeDate(habitCreatedAt)) {
+    return false;
+  }
+
   const searchDate = getSearchDateForFrequency(
     frequency,
     habitCreatedAt,
@@ -59,10 +64,33 @@ export function isHabitDueOnDate(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function normalizeDate(date: Date): Date {
+export function normalizeDate(date: Date): Date {
   const d = new Date(date);
   d.setUTCHours(0, 0, 0, 0);
   return d;
+}
+
+/**
+ * Local calendar day for a UTC offset, as UTC midnight (the way habit start
+ * dates and entry dates are stored).
+ */
+export function localDayStart(now: Date, utcOffsetMinutes: number): Date {
+  return normalizeDate(new Date(now.getTime() + utcOffsetMinutes * 60_000));
+}
+
+function daysInMonthUTC(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+/**
+ * Builds a UTC midnight date, clamping the day to the last day of the month so
+ * that e.g. a habit created on the 31st is due on April 30th instead of
+ * overflowing into May.
+ */
+function utcDateClamped(year: number, month: number, day: number): Date {
+  return new Date(
+    Date.UTC(year, month, Math.min(day, daysInMonthUTC(year, month))),
+  );
 }
 
 /**
@@ -77,9 +105,8 @@ function getDateWithSameDayOfWeek(
   const targetDayOfWeek = targetDate.getUTCDay();
   const daysToAdd = createdDayOfWeek - targetDayOfWeek;
 
-  const result = new Date(targetDate);
+  const result = normalizeDate(targetDate);
   result.setUTCDate(result.getUTCDate() + daysToAdd);
-  result.setUTCHours(0, 0, 0, 0);
   return result;
 }
 
@@ -90,10 +117,11 @@ function getDateWithSameDayOfMonth(
   habitCreatedAt: Date,
   targetDate: Date,
 ): Date {
-  const result = new Date(targetDate);
-  result.setUTCDate(habitCreatedAt.getUTCDate());
-  result.setUTCHours(0, 0, 0, 0);
-  return result;
+  return utcDateClamped(
+    targetDate.getUTCFullYear(),
+    targetDate.getUTCMonth(),
+    habitCreatedAt.getUTCDate(),
+  );
 }
 
 /**
@@ -103,9 +131,9 @@ function getDateWithSameDayAndMonth(
   habitCreatedAt: Date,
   targetDate: Date,
 ): Date {
-  const result = new Date(targetDate);
-  result.setUTCMonth(habitCreatedAt.getUTCMonth());
-  result.setUTCDate(habitCreatedAt.getUTCDate());
-  result.setUTCHours(0, 0, 0, 0);
-  return result;
+  return utcDateClamped(
+    targetDate.getUTCFullYear(),
+    habitCreatedAt.getUTCMonth(),
+    habitCreatedAt.getUTCDate(),
+  );
 }

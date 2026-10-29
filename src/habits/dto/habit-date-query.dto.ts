@@ -1,10 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsDateString, IsOptional } from 'class-validator';
 
-export class ToggleHabitDto {
+export class HabitDateQueryDto {
   @ApiPropertyOptional({
-    example: '2026-04-04T00:00:00.000Z',
-    description: 'Fecha objetivo del habito en formato ISO',
+    example: '2026-04-03',
+    description:
+      'Fecha en formato ISO (YYYY-MM-DD o fecha-hora). Si no se envía, se usa la fecha actual.',
   })
   @IsOptional()
   @IsDateString()

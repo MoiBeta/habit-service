@@ -1,12 +1,11 @@
 import { SubTaskResponseDto } from './subtask.response.dto';
 
-export enum TaskFrequency {
-    NONE = 'NONE',
-    DAILY = 'DAILY',
-    WEEKLY = 'WEEKLY',
-    MONTHLY = 'MONTHLY',
-    YEARLY = 'YEARLY',
-    CUSTOM = 'CUSTOM',
+export { TaskFrequency } from '../frequency.utils';
+import { TaskFrequency } from '../frequency.utils';
+
+export class ReminderResponseDto {
+    timeMinutes!: number; // local time, minutes since midnight
+    utcOffsetMinutes!: number;
 }
 
 export class HabitResponseDto {
@@ -14,7 +13,8 @@ export class HabitResponseDto {
     userId!: string;
     title!: string;
     description?: string;
-    startDate!: Date;
+    startDate!: Date; // date of the entry being returned (the viewed period)
+    habitStartDate!: Date; // day the habit starts; weekly/monthly/yearly repeat on it
     subtasks?: SubTaskResponseDto[];
     completed!: boolean;
     completedAt?: Date;
@@ -22,4 +22,5 @@ export class HabitResponseDto {
     instanceId!: string;
     taskFrequency!: TaskFrequency;
     priority!: number;
+    reminder!: ReminderResponseDto | null; // null when there is no active reminder
 }

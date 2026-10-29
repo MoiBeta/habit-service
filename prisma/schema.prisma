@@ -40,7 +40,9 @@ model SubTask {
 
 model Reminder {
   id          String   @id @default(uuid())
-  timeMinutes Int
+  timeMinutes Int      // local time, minutes since midnight
+  utcOffsetMinutes Int @default(0) // device UTC offset when it was saved
+  timezone    String?  // IANA time zone (e.g. America/Bogota); follows DST changes
   enabled     Boolean  @default(true)
 
   habitId     String

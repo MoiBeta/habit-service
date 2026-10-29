@@ -10,9 +10,17 @@ import { UpdateHabitDto } from './dto/update-habit.dto';
 import { CreateHabitDto } from './dto/create-habit.dto';
 import {
   HabitResponseDto,
-  TaskFrequency,
+  ReminderResponseDto,
 } from './dto/habit.response.dto';
 import { SubTaskResponseDto } from './dto/subtask.response.dto';
+import {
+  TaskFrequency,
+  getSearchDateForFrequency,
+  isHabitDueOnDate,
+  localDayStart,
+  normalizeDate,
+} from './frequency.utils';
+import { offsetMinutesAt } from '../notifications/timezone.utils';
 
 @Injectable()
 export class HabitsService {
@@ -35,8 +43,19 @@ export class HabitsService {
 
     const frequency = dto.frequency || TaskFrequency.DAILY;
     
-    // La fecha de creación es ahora, o la especificada
-    const creationDate = date ? new Date(date) : new Date();
+    // createdAt is the day the habit starts (UTC midnight of the user's local
+    // day): weekly/monthly/yearly habits repeat on that day. Without an
+    // explicit date, use the local day of the reminder's time zone; storing the
+    // current instant would move evening habits to the next UTC day.
+    const now = new Date();
+    const creationDate = date
+      ? normalizeDate(date)
+      : localDayStart(
+        now,
+        dto.reminder?.timezone
+          ? offsetMinutesAt(now, dto.reminder.timezone)
+          : (dto.reminder?.utcOffsetMinutes ?? 0),
+      );
 
     const habit = await this.prisma.habit.create({
       data: {
@@ -55,6 +74,8 @@ export class HabitsService {
           ? {
             create: {
               timeMinutes: dto.reminder.timeMinutes,
+              utcOffsetMinutes: dto.reminder.utcOffsetMinutes ?? 0,
+              timezone: dto.reminder.timezone,
               enabled: dto.reminder.enabled ?? true,
             },
           }
@@ -67,7 +88,7 @@ export class HabitsService {
     }) as any;
 
     // Crear la entry inicial con la fecha calculada según la frecuencia
-    const entryDate = this.getSearchDateForFrequency(
+    const entryDate = getSearchDateForFrequency(
       frequency,
       creationDate,
       creationDate,
@@ -96,16 +117,11 @@ export class HabitsService {
   }
 
   async getHabits(userId: string, date?: Date): Promise<HabitResponseDto[]> {
-    const targetDate = date
-      ? this.normalizeDate(new Date(date))
-      : this.normalizeDate(new Date());
+    const targetDate = normalizeDate(date ?? new Date());
 
     const habits = (await this.prisma.habit.findMany({
       where: { userId },
       include: {
-        entries: {
-          include: { subTasks: true },
-        },
         subTasks: true,
         reminders: true,
       },
@@ -114,29 +130,39 @@ export class HabitsService {
       },
     })) as any[];
 
-    const habitsDue = habits.filter((habit) =>
-      this.isHabitDueOnTargetDate(habit.frequency, habit.createdAt, targetDate),
-    );
+    const habitsDue = habits
+      .filter((habit) =>
+        isHabitDueOnDate(habit.frequency, habit.createdAt, targetDate),
+      )
+      .map((habit) => ({
+        habit,
+        searchDate: getSearchDateForFrequency(
+          habit.frequency,
+          habit.createdAt,
+          targetDate,
+        ),
+      }));
 
-    return habitsDue.map((habit) => {
-      // Obtener la entry correcta según la frecuencia
-      const entry = this.getEntryForFrequency(
-        habit.entries,
-        habit.frequency,
-        habit.createdAt,
-        targetDate,
-      );
+    // Only load the entry of the current period for each due habit instead of
+    // the whole history.
+    const entries =
+      habitsDue.length > 0
+        ? await this.prisma.habitEntry.findMany({
+          where: {
+            OR: habitsDue.map(({ habit, searchDate }) => ({
+              habitId: habit.id,
+              date: searchDate,
+            })),
+          },
+          include: { subTasks: true },
+        })
+        : [];
+    const entryByHabitId = new Map(entries.map((e) => [e.habitId, e]));
 
-      // Calcular la fecha que debe mostrar según la frecuencia
-      const displayDate = this.getDisplayDateForFrequency(
-        habit.frequency,
-        habit.createdAt,
-        targetDate,
-      );
-
-      const entryForResponse = entry ?? {
+    return habitsDue.map(({ habit, searchDate }) => {
+      const entryForResponse = entryByHabitId.get(habit.id) ?? {
         id: '',
-        date: displayDate,
+        date: searchDate,
         completed: false,
         completedAt: null,
         subTasks: this.sortSubTasks(habit.subTasks).map((st: any) => ({
@@ -147,7 +173,7 @@ export class HabitsService {
           orderId: this.getSubTaskOrderId(st, 0),
         })),
       };
-      
+
       return this.mapHabitToResponse(habit, entryForResponse);
     });
   }
@@ -157,15 +183,13 @@ export class HabitsService {
     habitId: string,
     date?: Date,
   ): Promise<HabitResponseDto> {
-    const targetDate = date
-      ? this.normalizeDate(new Date(date))
-      : this.normalizeDate(new Date());
+    const targetDate = normalizeDate(date ?? new Date());
 
     await this.validateOwnership(userId, habitId);
 
     const habit = (await this.prisma.habit.findUnique({
       where: { id: habitId },
-      include: { subTasks: true },
+      include: { subTasks: true, reminders: true },
     })) as any;
 
     if (!habit) {
@@ -179,7 +203,7 @@ export class HabitsService {
     }
 
     // Obtener la fecha de búsqueda/creación según la frecuencia
-    const searchDate = this.getSearchDateForFrequency(
+    const searchDate = getSearchDateForFrequency(
       habit.frequency,
       habit.createdAt,
       targetDate,
@@ -233,18 +257,16 @@ export class HabitsService {
 
     const habit = (await this.prisma.habit.findUnique({
       where: { id: habitId },
-      include: { subTasks: true },
+      include: { subTasks: true, reminders: true },
     })) as any;
 
     if (!habit) {
       throw new NotFoundException('Habit not found');
     }
 
-    const targetDate = date
-      ? this.normalizeDate(new Date(date))
-      : this.normalizeDate(new Date());
+    const targetDate = normalizeDate(date ?? new Date());
 
-    const searchDate = this.getSearchDateForFrequency(
+    const searchDate = getSearchDateForFrequency(
       habit.frequency,
       habit.createdAt,
       targetDate,
@@ -326,79 +348,137 @@ export class HabitsService {
     return this.mapHabitToResponse(habit, updatedEntry);
   }
 
-  async updateHabit(userId: string, habitId: string, dto: UpdateHabitDto) {
+  async updateHabit(
+    userId: string,
+    habitId: string,
+    dto: UpdateHabitDto,
+    date?: Date,
+  ) {
     await this.validateOwnership(userId, habitId);
 
-    const habitData: {
-      name?: string;
-      description?: string | null;
-      priority?: number;
-      frequency?: string;
-    } = {
-      name: dto.name,
-      description: dto.description,
-      priority: dto.priority,
-      frequency: dto.frequency,
-    };
+    const targetDate = normalizeDate(date ?? new Date());
 
-    const updated = (await this.prisma.habit.update({
-      where: { id: habitId },
-      data: habitData,
-      include: {
-        subTasks: true,
-        reminders: true,
-      },
-    })) as any;
-
-    if (dto.subTasks !== undefined) {
-      await this.prisma.subTask.deleteMany({
-        where: { habitId },
+    const finalHabit = await this.prisma.$transaction(async (tx) => {
+      const habit = await tx.habit.update({
+        where: { id: habitId },
+        data: {
+          name: dto.name,
+          description: dto.description,
+          priority: dto.priority,
+          frequency: dto.frequency,
+          // The habit's start day (see createHabit).
+          createdAt: dto.date ? normalizeDate(new Date(dto.date)) : undefined,
+        },
       });
 
-      if (dto.subTasks.length > 0) {
-        await this.prisma.subTask.createMany({
+      if (dto.subTasks !== undefined) {
+        await tx.subTask.deleteMany({ where: { habitId } });
+
+        const newSubTasks = await tx.subTask.createManyAndReturn({
           data: this.buildSubTaskCreateData(dto.subTasks).map((subtask) => ({
             habitId,
             title: subtask.title,
             orderId: subtask.orderId,
           })),
         });
-      }
-    }
 
-    if (dto.reminder !== undefined) {
-      const existingReminder = await this.prisma.reminder.findFirst({
-        where: { habitId },
+        // The entry of the current period still points to the old template
+        // subtasks; rebuild it keeping the completion state by title.
+        // Past entries are historical snapshots and are left untouched.
+        const searchDate = getSearchDateForFrequency(
+          habit.frequency,
+          habit.createdAt,
+          targetDate,
+        );
+        const entry = await tx.habitEntry.findUnique({
+          where: { habitId_date: { habitId, date: searchDate } },
+          include: { subTasks: true },
+        });
+
+        if (entry) {
+          const completedTitles = new Set(
+            entry.subTasks.filter((st) => st.completed).map((st) => st.title),
+          );
+          await tx.entrySubTask.deleteMany({ where: { entryId: entry.id } });
+          await tx.entrySubTask.createMany({
+            data: newSubTasks.map((st, index) => ({
+              entryId: entry.id,
+              title: st.title,
+              completed: completedTitles.has(st.title),
+              sourceSubTaskId: st.id,
+              orderId: this.getSubTaskOrderId(st, index),
+            })),
+          });
+
+          if (newSubTasks.length > 0) {
+            const allCompleted = newSubTasks.every((st) =>
+              completedTitles.has(st.title),
+            );
+            await tx.habitEntry.update({
+              where: { id: entry.id },
+              data: {
+                completed: allCompleted,
+                completedAt: allCompleted
+                  ? (entry.completedAt ?? new Date())
+                  : null,
+              },
+            });
+          }
+        }
+      }
+
+      if (dto.reminder !== undefined) {
+        const existingReminder = await tx.reminder.findFirst({
+          where: { habitId },
+        });
+
+        if (existingReminder) {
+          await tx.reminder.update({
+            where: { id: existingReminder.id },
+            data: {
+              timeMinutes: dto.reminder.timeMinutes,
+              utcOffsetMinutes: dto.reminder.utcOffsetMinutes ?? 0,
+              timezone: dto.reminder.timezone,
+              enabled: dto.reminder.enabled ?? true,
+            },
+          });
+        } else {
+          await tx.reminder.create({
+            data: {
+              habitId,
+              timeMinutes: dto.reminder.timeMinutes,
+              utcOffsetMinutes: dto.reminder.utcOffsetMinutes ?? 0,
+              timezone: dto.reminder.timezone,
+              enabled: dto.reminder.enabled ?? true,
+            },
+          });
+        }
+      }
+
+      return tx.habit.findUniqueOrThrow({
+        where: { id: habitId },
+        include: {
+          subTasks: true,
+          reminders: true,
+        },
       });
+    });
 
-      if (existingReminder) {
-        await this.prisma.reminder.update({
-          where: { id: existingReminder.id },
-          data: {
-            timeMinutes: dto.reminder.timeMinutes,
-            enabled: dto.reminder.enabled ?? true,
-          },
-        });
-      } else {
-        await this.prisma.reminder.create({
-          data: {
-            habitId,
-            timeMinutes: dto.reminder.timeMinutes,
-            enabled: dto.reminder.enabled ?? true,
-          },
-        });
-      }
-    }
-
-    const finalHabit = await this.prisma.habit.findUniqueOrThrow({
-      where: { id: habitId },
-      include: {
-        subTasks: true,
-        reminders: true,
+    const entry = await this.prisma.habitEntry.findUnique({
+      where: {
+        habitId_date: {
+          habitId,
+          date: getSearchDateForFrequency(
+            finalHabit.frequency,
+            finalHabit.createdAt,
+            targetDate,
+          ),
+        },
       },
-    }) as any;
+      include: { subTasks: true },
+    });
 
-    return this.mapHabitToResponse(finalHabit);
+    return this.mapHabitToResponse(finalHabit, entry ?? undefined);
   }
 
   async deleteHabit(userId: string, habitId: string) {
@@ -407,130 +487,6 @@ export class HabitsService {
     return this.prisma.habit.delete({
       where: { id: habitId },
     });
-  }
-
-  private getSearchDateForFrequency(
-    frequency: string,
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): Date {
-    switch (frequency) {
-      case TaskFrequency.WEEKLY:
-        return this.getDateWithSameDayOfWeek(habitCreatedAt, targetDate);
-      case TaskFrequency.MONTHLY:
-        return this.getDateWithSameDayOfMonth(habitCreatedAt, targetDate);
-      case TaskFrequency.YEARLY:
-        return this.getDateWithSameDayAndMonth(habitCreatedAt, targetDate);
-      case TaskFrequency.DAILY:
-      default:
-        return this.normalizeDate(targetDate);
-    }
-  }
-
-  /**
-   * Obtiene la fecha a mostrar en la respuesta según la frecuencia
-   */
-  private getDisplayDateForFrequency(
-    frequency: string,
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): Date {
-    return this.getSearchDateForFrequency(frequency, habitCreatedAt, targetDate);
-  }
-
-  /**
-   * Obtiene la entrada correcta de entre la lista según la frecuencia
-   */
-  private getEntryForFrequency(
-    entries: any[],
-    frequency: string,
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): any {
-    if (entries.length === 0) {
-      return null;
-    }
-
-    const searchDate = this.getSearchDateForFrequency(
-      frequency,
-      habitCreatedAt,
-      targetDate,
-    );
-
-    // Buscar por fecha exacta
-    return entries.find((e) => 
-      e.date.getTime() === searchDate.getTime()
-    );
-  }
-
-  private isHabitDueOnTargetDate(
-    frequency: string,
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): boolean {
-    const searchDate = this.getSearchDateForFrequency(
-      frequency,
-      habitCreatedAt,
-      targetDate,
-    );
-
-    return searchDate.getTime() === targetDate.getTime();
-  }
-
-  /**
-   * Calcula la fecha más cercana con el mismo día de la semana
-   * Ej: habitCreatedAt es martes, targetDate es viernes -> devuelve el martes de esa semana/próxima semana más cercana
-   */
-  private getDateWithSameDayOfWeek(
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): Date {
-    const createdDayOfWeek = habitCreatedAt.getUTCDay();
-    const targetDayOfWeek = targetDate.getUTCDay();
-    
-    const daysToAdd = createdDayOfWeek - targetDayOfWeek;
-    
-    const result = new Date(targetDate);
-    result.setUTCDate(result.getUTCDate() + daysToAdd);
-    result.setUTCHours(0, 0, 0, 0);
-    
-    return result;
-  }
-
-  /**
-   * Calcula la fecha del mismo día del mes
-   * Ej: habitCreatedAt es 25 de febrero, targetDate es 5 de marzo -> devuelve 25 de marzo
-   */
-  private getDateWithSameDayOfMonth(
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): Date {
-    const createdDay = habitCreatedAt.getUTCDate();
-    const result = new Date(targetDate);
-    
-    result.setUTCDate(createdDay);
-    result.setUTCHours(0, 0, 0, 0);
-    
-    return result;
-  }
-
-  /**
-   * Calcula la fecha del mismo día y mes del año
-   * Ej: habitCreatedAt es 25 de febrero, targetDate es 15 de julio -> devuelve 25 de febrero del año de targetDate
-   */
-  private getDateWithSameDayAndMonth(
-    habitCreatedAt: Date,
-    targetDate: Date,
-  ): Date {
-    const createdDay = habitCreatedAt.getUTCDate();
-    const createdMonth = habitCreatedAt.getUTCMonth();
-    
-    const result = new Date(targetDate);
-    result.setUTCMonth(createdMonth);
-    result.setUTCDate(createdDay);
-    result.setUTCHours(0, 0, 0, 0);
-    
-    return result;
   }
 
   private buildSubTaskCreateData(subTasks: Array<{ title: string; orderId?: number | null }>) {
@@ -577,6 +533,7 @@ export class HabitsService {
       title: habit.name,
       description: habit.description,
       startDate: entry?.date || new Date(),
+      habitStartDate: habit.createdAt,
       subtasks: subtasksSource
         ? subtasksSource.map((st: any) => {
           const subtask = new SubTaskResponseDto();
@@ -597,13 +554,18 @@ export class HabitsService {
       instanceId: entry?.id || '',
       taskFrequency: habit.frequency as TaskFrequency,
       priority: habit.priority,
+      reminder: this.mapReminder(habit.reminders),
     };
   }
 
-  normalizeDate(date: Date) {
-    const d = new Date(date);
-    d.setUTCHours(0, 0, 0, 0);
-    return d;
+  private mapReminder(reminders?: any[]): ReminderResponseDto | null {
+    const reminder = reminders?.find((r) => r.enabled);
+    return reminder
+      ? {
+        timeMinutes: reminder.timeMinutes,
+        utcOffsetMinutes: reminder.utcOffsetMinutes,
+      }
+      : null;
   }
 }
 

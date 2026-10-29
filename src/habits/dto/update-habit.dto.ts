@@ -1,3 +1,5 @@
+import { PartialType } from '@nestjs/swagger';
 import { CreateHabitDto } from './create-habit.dto';
 
-export class UpdateHabitDto extends CreateHabitDto {}
+// All fields optional: fields that are not sent keep their current value.
+export class UpdateHabitDto extends PartialType(CreateHabitDto) {}

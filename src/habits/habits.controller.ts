@@ -14,10 +14,11 @@ import { HabitsService } from './habits.service';
 import { CreateHabitDto } from './dto/create-habit.dto';
 import { UpdateHabitDto } from './dto/update-habit.dto';
 import { SyncSubtasksDto } from './dto/sync-subtasks.dto';
+import { HabitDateQueryDto } from './dto/habit-date-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @UseGuards(JwtAuthGuard)
 @ApiTags('habits')
@@ -39,52 +40,37 @@ export class HabitsController {
 
   @Get()
   @ApiOperation({ summary: 'Obtener hábitos' })
-  @ApiQuery({
-    name: 'date',
-    required: false,
-    description: 'Fecha a consultar en formato ISO',
-    example: '2026-04-03T00:00:00.000Z',
-  })
   getHabits(
     @Req() req: Request & { user: AuthenticatedUser },
-    @Query('date') date?: Date,
+    @Query() query: HabitDateQueryDto,
   ) {
     const userId = req.user.id;
-    return this.habitsService.getHabits(userId, date);
+    const parsedDate = query.date ? new Date(query.date) : undefined;
+    return this.habitsService.getHabits(userId, parsedDate);
   }
 
   @Post(':id/toggle')
   @ApiOperation({ summary: 'Alternar hábito' })
-  @ApiQuery({
-    name: 'date',
-    required: false,
-    description: 'Fecha para el entry del hábito en formato ISO. Si no se envía, se usa la fecha actual.',
-  })
   toggleHabit(
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('id') habitId: string,
-    @Query('date') date?: string,
+    @Query() query: HabitDateQueryDto,
   ) {
     const userId = req.user.id;
-    const parsedDate = date ? new Date(date) : undefined;
+    const parsedDate = query.date ? new Date(query.date) : undefined;
     return this.habitsService.toggleHabit(userId, habitId, parsedDate);
   }
 
   @Post(':habitId/subtasks/sync')
   @ApiOperation({ summary: 'Sincronizar estado de subtareas' })
-  @ApiQuery({
-    name: 'date',
-    required: false,
-    description: 'Fecha para buscar/crear el entry en formato ISO. Si no se envía, se usa la fecha actual.',
-  })
   syncSubtasks(
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('habitId') habitId: string,
     @Body() dto: SyncSubtasksDto,
-    @Query('date') date?: string,
+    @Query() query: HabitDateQueryDto,
   ) {
     const userId = req.user.id;
-    const parsedDate = date ? new Date(date) : undefined;
+    const parsedDate = query.date ? new Date(query.date) : undefined;
     return this.habitsService.syncSubtasks(userId, habitId, dto, parsedDate);
   }
 
@@ -94,9 +80,11 @@ export class HabitsController {
     @Req() req: Request & { user: AuthenticatedUser },
     @Param('id') habitId: string,
     @Body() dto: UpdateHabitDto,
+    @Query() query: HabitDateQueryDto,
   ) {
     const userId = req.user.id;
-    return this.habitsService.updateHabit(userId, habitId, dto);
+    const parsedDate = query.date ? new Date(query.date) : undefined;
+    return this.habitsService.updateHabit(userId, habitId, dto, parsedDate);
   }
 
   @Delete(':id')
