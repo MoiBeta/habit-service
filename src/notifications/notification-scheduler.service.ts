@@ -6,7 +6,9 @@ import { DevicesService } from './devices.service';
 import {
   getSearchDateForFrequency,
   isHabitDueOnDate,
+  localDayStart,
 } from '../habits/frequency.utils';
+import { LocalSlot, dueLocalSlots, isValidTimeZone } from './timezone.utils';
 
 @Injectable()
 export class NotificationSchedulerService {
@@ -51,22 +53,76 @@ export class NotificationSchedulerService {
     }
   }
 
+  /**
+   * Every UTC offset currently in use is a multiple of 15 minutes, between
+   * UTC-12:00 and UTC+14:00.
+   */
+  static readonly UTC_OFFSETS: number[] = Array.from(
+    { length: (840 + 720) / 15 + 1 },
+    (_, i) => -720 + i * 15,
+  );
+
+  /** Local wall-clock time for a given UTC offset, expressed as a UTC Date. */
+  toLocalTime(now: Date, utcOffsetMinutes: number): Date {
+    return new Date(now.getTime() + utcOffsetMinutes * 60_000);
+  }
+
+  /** Local calendar day (as UTC midnight, matching how entry dates are stored). */
+  localDayStart(now: Date, utcOffsetMinutes: number): Date {
+    return localDayStart(now, utcOffsetMinutes);
+  }
+
+  /**
+   * For every time zone in use, the local minutes due now mapped to their
+   * local day (a minute skipped by a daylight saving time change is due right
+   * after the change).
+   */
+  private async dueSlotsByTimeZone(
+    now: Date,
+  ): Promise<Map<string, Map<number, Date>>> {
+    const rows = await this.prisma.reminder.findMany({
+      where: { enabled: true, timezone: { not: null } },
+      distinct: ['timezone'],
+      select: { timezone: true },
+    });
+
+    const result = new Map<string, Map<number, Date>>();
+    for (const { timezone } of rows) {
+      if (!timezone || !isValidTimeZone(timezone)) continue;
+      const slots: LocalSlot[] = dueLocalSlots(now, timezone);
+      if (slots.length === 0) continue;
+      result.set(timezone, new Map(slots.map((s) => [s.minute, s.day])));
+    }
+    return result;
+  }
+
   private async processDueReminders(): Promise<void> {
     const now = new Date();
     const currentMinute = this.computeCurrentMinuteUTC(now);
 
     this.logger.debug(`Cron tick at minute ${currentMinute} (${now.toISOString()})`);
 
-    // Today at midnight UTC — used for due-date checks
-    const todayStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
+    // Reminder times are stored in the user's local time. Reminders with an
+    // IANA time zone follow its daylight saving time rules; older ones only
+    // have the fixed UTC offset of the device when they were saved.
+    const slotsByTimeZone = await this.dueSlotsByTimeZone(now);
 
-    // Query enabled reminders where timeMinutes matches currentMinute, including the habit
     const dueReminders = await this.prisma.reminder.findMany({
       where: {
-        timeMinutes: currentMinute,
         enabled: true,
+        OR: [
+          ...NotificationSchedulerService.UTC_OFFSETS.map((offset) => ({
+            timezone: null,
+            utcOffsetMinutes: offset,
+            timeMinutes: this.computeCurrentMinuteUTC(
+              this.toLocalTime(now, offset),
+            ),
+          })),
+          ...[...slotsByTimeZone].map(([timezone, slots]) => ({
+            timezone,
+            timeMinutes: { in: [...slots.keys()] },
+          })),
+        ],
       },
       include: {
         habit: true,
@@ -81,12 +137,20 @@ export class NotificationSchedulerService {
       `Found ${dueReminders.length} reminder(s) matching minute ${currentMinute}`,
     );
 
-    // --- FIX: filter out habits that are not due today based on their frequency ---
+    // "Today" is the user's local day, not the UTC day: an evening reminder in
+    // UTC-5 runs after UTC midnight but still belongs to the local day.
+    const todayFor = (r: {
+      timeMinutes: number;
+      utcOffsetMinutes?: number | null;
+      timezone?: string | null;
+    }) =>
+      (r.timezone && slotsByTimeZone.get(r.timezone)?.get(r.timeMinutes)) ||
+      this.localDayStart(now, r.utcOffsetMinutes ?? 0);
+
     // A WEEKLY habit is only due on the same weekday it was created; a MONTHLY habit
-    // only on the same day-of-month; etc.  Without this check every reminder was firing
-    // every day regardless of frequency.
+    // only on the same day-of-month; etc.
     const frequencyDueReminders = dueReminders.filter((r) =>
-      isHabitDueOnDate(r.habit.frequency, r.habit.createdAt, todayStart),
+      isHabitDueOnDate(r.habit.frequency, r.habit.createdAt, todayFor(r)),
     );
 
     if (frequencyDueReminders.length === 0) {
@@ -108,7 +172,7 @@ export class NotificationSchedulerService {
       date: getSearchDateForFrequency(
         r.habit.frequency,
         r.habit.createdAt,
-        todayStart,
+        todayFor(r),
       ),
       completed: true as const,
     }));

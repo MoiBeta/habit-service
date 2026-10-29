@@ -22,6 +22,8 @@ function makeReminder(overrides: {
   id?: string;
   habitId?: string;
   timeMinutes?: number;
+  utcOffsetMinutes?: number;
+  timezone?: string | null;
   frequency?: string;
   createdAt?: Date;
   userId?: string;
@@ -31,6 +33,8 @@ function makeReminder(overrides: {
     id = 'reminder-1',
     habitId = 'habit-1',
     timeMinutes = 870,
+    utcOffsetMinutes = 0,
+    timezone = null,
     frequency = 'DAILY',
     createdAt = new Date(), // same day → always due
     userId = 'user-1',
@@ -41,6 +45,8 @@ function makeReminder(overrides: {
     id,
     habitId,
     timeMinutes,
+    utcOffsetMinutes,
+    timezone,
     enabled: true,
     habit: {
       id: habitId,
@@ -192,7 +198,8 @@ describe('NotificationSchedulerService', () => {
       await service.handleDueReminders(); // should be skipped
       await first;
 
-      expect(prisma.reminder.findMany).toHaveBeenCalledTimes(1);
+      // Only the first run queries: time zones in use + due reminders.
+      expect(prisma.reminder.findMany).toHaveBeenCalledTimes(2);
     });
 
     it('should send notifications to multiple tokens in parallel', async () => {
@@ -235,6 +242,38 @@ describe('NotificationSchedulerService', () => {
   // -------------------------------------------------------------------------
   // Frequency filtering — the core bug fix
   // -------------------------------------------------------------------------
+
+  describe('IANA time zones', () => {
+    it('uses the local day of the reminder time zone for WEEKLY habits', async () => {
+      // Tuesday 20:00 in New York (EDT, UTC-4) is Wednesday 00:00 UTC.
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-28T00:00:00Z'));
+
+      const reminder = makeReminder({
+        frequency: 'WEEKLY',
+        createdAt: utcDay('2026-10-20'), // a Tuesday
+        timeMinutes: 20 * 60,
+        timezone: 'America/New_York',
+      });
+      prisma.reminder.findMany
+        .mockResolvedValueOnce([{ timezone: 'America/New_York' }] as never)
+        .mockResolvedValueOnce([reminder] as never);
+      prisma.habitEntry.findMany.mockResolvedValue([] as never);
+      devicesService.getTokensByUserId.mockResolvedValue([
+        { id: 'dt-1', token: 'token-tz', userId: 'user-1', platform: 'android' },
+      ] as never);
+      firebaseService.sendToDevice.mockResolvedValue({ success: true } as never);
+
+      await service.handleDueReminders();
+
+      const query = (prisma.reminder.findMany.mock.calls[1][0] as any).where.OR;
+      expect(query).toContainEqual({
+        timezone: 'America/New_York',
+        timeMinutes: { in: [20 * 60] },
+      });
+      expect(firebaseService.sendToDevice).toHaveBeenCalledTimes(1);
+      jest.useRealTimers();
+    });
+  });
 
   describe('Frequency filtering', () => {
     /**
@@ -396,6 +435,41 @@ describe('NotificationSchedulerService', () => {
       await service.handleDueReminders();
 
       expect(firebaseService.sendToDevice).not.toHaveBeenCalled();
+      jest.useRealTimers();
+    });
+  });
+
+  describe('Local timezone handling', () => {
+    it('matches reminders by local time for each UTC offset', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-28T01:00:00Z'));
+      prisma.reminder.findMany.mockResolvedValue([] as never);
+
+      await service.handleDueReminders();
+
+      // calls[0] lists the time zones in use; calls[1] finds due reminders.
+      const where = (prisma.reminder.findMany.mock.calls[1][0] as any).where;
+      // 01:00 UTC is 20:00 (1200) in UTC-5 and 01:00 (60) in UTC.
+      expect(where.OR).toContainEqual({ timezone: null, utcOffsetMinutes: -300, timeMinutes: 1200 });
+      expect(where.OR).toContainEqual({ timezone: null, utcOffsetMinutes: 0, timeMinutes: 60 });
+      jest.useRealTimers();
+    });
+
+    it("checks completion against the user's local day, not the UTC day", async () => {
+      // 20:00 on Oct 27 in UTC-5 == 01:00 on Oct 28 UTC
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-28T01:00:00Z'));
+      const reminder = makeReminder({
+        timeMinutes: 1200,
+        utcOffsetMinutes: -300,
+        createdAt: utcDay('2026-10-01'),
+      });
+      prisma.reminder.findMany.mockResolvedValue([reminder] as never);
+      prisma.habitEntry.findMany.mockResolvedValue([] as never);
+      devicesService.getTokensByUserId.mockResolvedValue([] as never);
+
+      await service.handleDueReminders();
+
+      const where = (prisma.habitEntry.findMany.mock.calls[0][0] as any).where;
+      expect(where.OR[0].date.toISOString()).toBe('2026-10-27T00:00:00.000Z');
       jest.useRealTimers();
     });
   });
