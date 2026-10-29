@@ -7,7 +7,7 @@ describe('DevicesService', () => {
   let prisma: {
     deviceToken: {
       upsert: jest.Mock;
-      delete: jest.Mock;
+      deleteMany: jest.Mock;
       findMany: jest.Mock;
     };
   };
@@ -16,7 +16,7 @@ describe('DevicesService', () => {
     prisma = {
       deviceToken: {
         upsert: jest.fn(),
-        delete: jest.fn(),
+        deleteMany: jest.fn(),
         findMany: jest.fn(),
       },
     };
@@ -78,14 +78,14 @@ describe('DevicesService', () => {
   });
 
   describe('deleteToken', () => {
-    it('should call prisma.deviceToken.delete with the correct token', async () => {
-      (prisma.deviceToken.delete as jest.Mock).mockResolvedValue(
+    it('should call prisma.deviceToken.deleteMany with the correct token', async () => {
+      (prisma.deviceToken.deleteMany as jest.Mock).mockResolvedValue(
         undefined as never,
       );
 
       await service.deleteToken('fcm-token-to-delete');
 
-      expect(prisma.deviceToken.delete).toHaveBeenCalledWith({
+      expect(prisma.deviceToken.deleteMany).toHaveBeenCalledWith({
         where: { token: 'fcm-token-to-delete' },
       });
     });
@@ -119,6 +119,18 @@ describe('DevicesService', () => {
         where: { userId: 'user-1' },
       });
       expect(result).toEqual(tokens);
+    });
+  });
+
+  describe('deleteUserToken', () => {
+    it("only deletes the token when it belongs to the user", async () => {
+      (prisma.deviceToken.deleteMany as jest.Mock).mockResolvedValue({ count: 1 } as never);
+
+      await service.deleteUserToken('user-1', 'fcm-token');
+
+      expect(prisma.deviceToken.deleteMany).toHaveBeenCalledWith({
+        where: { token: 'fcm-token', userId: 'user-1' },
+      });
     });
   });
 });

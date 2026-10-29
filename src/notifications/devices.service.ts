@@ -19,7 +19,13 @@ export class DevicesService {
   }
 
   async deleteToken(token: string): Promise<void> {
-    await this.prisma.deviceToken.delete({ where: { token } });
+    // deleteMany: the same invalid token can be reported by several sends.
+    await this.prisma.deviceToken.deleteMany({ where: { token } });
+  }
+
+  /** Deletes a token only if it belongs to the given user. */
+  async deleteUserToken(userId: string, token: string): Promise<void> {
+    await this.prisma.deviceToken.deleteMany({ where: { token, userId } });
   }
 
   async getTokensByUserId(userId: string): Promise<DeviceToken[]> {
