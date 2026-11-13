@@ -472,5 +472,48 @@ describe('NotificationSchedulerService', () => {
       expect(where.OR[0].date.toISOString()).toBe('2026-10-27T00:00:00.000Z');
       jest.useRealTimers();
     });
+
+    it('reminds a ONCE habit every day from its start until it is completed', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-11-12T14:30:00Z'));
+      const reminder = makeReminder({
+        frequency: 'ONCE',
+        createdAt: utcDay('2026-11-09'),
+      });
+      prisma.reminder.findMany.mockResolvedValue([reminder] as never);
+      prisma.habitEntry.findMany.mockResolvedValue([] as never);
+      devicesService.getTokensByUserId.mockResolvedValue([
+        { token: 'token-1' },
+      ] as never);
+      firebaseService.sendToDevice.mockResolvedValue({ success: true } as never);
+
+      await service.handleDueReminders();
+
+      // Completed on any day since it started, not only today.
+      const where = (prisma.habitEntry.findMany.mock.calls[0][0] as any).where;
+      expect(where.OR[0]).toEqual({
+        habitId: 'habit-1',
+        date: { gte: utcDay('2026-11-09') },
+        completed: true,
+      });
+      expect(firebaseService.sendToDevice).toHaveBeenCalledTimes(1);
+      jest.useRealTimers();
+    });
+
+    it('does not remind a ONCE habit completed on an earlier day', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-11-12T14:30:00Z'));
+      const reminder = makeReminder({
+        frequency: 'ONCE',
+        createdAt: utcDay('2026-11-09'),
+      });
+      prisma.reminder.findMany.mockResolvedValue([reminder] as never);
+      prisma.habitEntry.findMany.mockResolvedValue([
+        { habitId: 'habit-1' },
+      ] as never);
+
+      await service.handleDueReminders();
+
+      expect(firebaseService.sendToDevice).not.toHaveBeenCalled();
+      jest.useRealTimers();
+    });
   });
 });

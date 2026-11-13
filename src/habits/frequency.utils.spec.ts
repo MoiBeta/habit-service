@@ -1,9 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   TaskFrequency,
+  getOnceDisplayDay,
   getSearchDateForFrequency,
   isHabitDueOnDate,
   localDayStart,
+  pickOnceEntry,
 } from './frequency.utils';
 
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
@@ -49,5 +51,39 @@ describe('frequency utils', () => {
     const now = new Date('2026-10-28T02:00:00.000Z');
     expect(localDayStart(now, -300).toISOString()).toBe(d('2026-10-27').toISOString());
     expect(localDayStart(now, 0).toISOString()).toBe(d('2026-10-28').toISOString());
+  });
+
+  describe('ONCE', () => {
+    const start = d('2026-11-10');
+    const entry = (iso: string, completed: boolean) => ({ date: d(iso), completed });
+
+    it('a pending habit is shown on the current day only', () => {
+      expect(getOnceDisplayDay(start, d('2026-11-10'))).toEqual(d('2026-11-10'));
+      // Not completed on the 10th or 11th: it moved to the 12th.
+      expect(getOnceDisplayDay(start, d('2026-11-12'))).toEqual(d('2026-11-12'));
+      expect(
+        getOnceDisplayDay(start, d('2026-11-12'), entry('2026-11-10', false)),
+      ).toEqual(d('2026-11-12'));
+    });
+
+    it('a pending habit that has not started is shown on its start day', () => {
+      expect(getOnceDisplayDay(start, d('2026-11-08'))).toEqual(start);
+    });
+
+    it('a completed habit stays on the day it was completed', () => {
+      const done = entry('2026-11-11', true);
+      expect(getOnceDisplayDay(start, d('2026-11-11'), done)).toEqual(d('2026-11-11'));
+      expect(getOnceDisplayDay(start, d('2026-11-20'), done)).toEqual(d('2026-11-11'));
+    });
+
+    it('picks the completed entry, or the latest one while pending', () => {
+      expect(pickOnceEntry([])).toBeUndefined();
+      expect(
+        pickOnceEntry([entry('2026-11-12', false), entry('2026-11-10', false)])?.date,
+      ).toEqual(d('2026-11-12'));
+      expect(
+        pickOnceEntry([entry('2026-11-12', false), entry('2026-11-11', true)])?.date,
+      ).toEqual(d('2026-11-11'));
+    });
   });
 });

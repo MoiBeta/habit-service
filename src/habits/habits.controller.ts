@@ -46,7 +46,8 @@ export class HabitsController {
   ) {
     const userId = req.user.id;
     const parsedDate = query.date ? new Date(query.date) : undefined;
-    return this.habitsService.getHabits(userId, parsedDate);
+    const today = query.today ? new Date(query.today) : undefined;
+    return this.habitsService.getHabits(userId, parsedDate, today);
   }
 
   @Post(':id/toggle')
@@ -84,7 +85,14 @@ export class HabitsController {
   ) {
     const userId = req.user.id;
     const parsedDate = query.date ? new Date(query.date) : undefined;
-    return this.habitsService.updateHabit(userId, habitId, dto, parsedDate);
+    const today = query.today ? new Date(query.today) : undefined;
+    return this.habitsService.updateHabit(
+      userId,
+      habitId,
+      dto,
+      parsedDate,
+      today,
+    );
   }
 
   @Delete(':id')

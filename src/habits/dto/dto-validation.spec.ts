@@ -27,4 +27,9 @@ describe('DTO validation', () => {
     const dto = plainToInstance(CreateHabitDto, { name: 'x', frequency: 'NONE' });
     expect(validateSync(dto).map((e) => e.property)).toContain('frequency');
   });
+
+  it('accepts the ONCE frequency', () => {
+    const dto = plainToInstance(CreateHabitDto, { name: 'x', frequency: 'ONCE' });
+    expect(validateSync(dto)).toHaveLength(0);
+  });
 });

@@ -47,7 +47,7 @@ export class CreateHabitDto {
   @ApiPropertyOptional({
     enum: TaskFrequency,
     example: TaskFrequency.DAILY,
-    description: 'Frecuencia del habito: DAILY, WEEKLY, MONTHLY, YEARLY',
+    description: 'Frecuencia del habito: DAILY, WEEKLY, MONTHLY, YEARLY, o ONCE para una tarea de una sola vez',
   })
   @IsOptional()
   @IsEnum(TaskFrequency)
