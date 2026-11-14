@@ -4,9 +4,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FirebaseService } from './firebase.service';
 import { DevicesService } from './devices.service';
 import {
+  TaskFrequency,
   getSearchDateForFrequency,
   isHabitDueOnDate,
   localDayStart,
+  normalizeDate,
 } from '../habits/frequency.utils';
 import { LocalSlot, dueLocalSlots, isValidTimeZone } from './timezone.utils';
 
@@ -167,13 +169,18 @@ export class NotificationSchedulerService {
     // Batch query for completed entries — each habit may have a different entry date
     // depending on its frequency, so we collect (habitId, entryDate) pairs and query
     // all at once using an OR condition.
+    // A ONCE habit has a single period: it is done once any entry from its
+    // start day on is completed, and until then it is reminded every day.
     const habitEntryFilters = frequencyDueReminders.map((r) => ({
       habitId: r.habit.id,
-      date: getSearchDateForFrequency(
-        r.habit.frequency,
-        r.habit.createdAt,
-        todayFor(r),
-      ),
+      date:
+        r.habit.frequency === TaskFrequency.ONCE
+          ? { gte: normalizeDate(r.habit.createdAt) }
+          : getSearchDateForFrequency(
+            r.habit.frequency,
+            r.habit.createdAt,
+            todayFor(r),
+          ),
       completed: true as const,
     }));
 

@@ -14,7 +14,7 @@ model Habit {
   description String?
 
   priority    Int      @default(100)
-  frequency   String   @default("DAILY")  // DAILY, WEEKLY, MONTHLY, YEARLY
+  frequency   String   @default("DAILY")  // DAILY, WEEKLY, MONTHLY, YEARLY, ONCE
 
   userId      String   // 🔥 referencia lógica, no relación
 

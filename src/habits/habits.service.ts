@@ -15,10 +15,12 @@ import {
 import { SubTaskResponseDto } from './dto/subtask.response.dto';
 import {
   TaskFrequency,
+  getOnceDisplayDay,
   getSearchDateForFrequency,
   isHabitDueOnDate,
   localDayStart,
   normalizeDate,
+  pickOnceEntry,
 } from './frequency.utils';
 import { offsetMinutesAt } from '../notifications/timezone.utils';
 
@@ -116,8 +118,13 @@ export class HabitsService {
     return this.mapHabitToResponse(habit, entry);
   }
 
-  async getHabits(userId: string, date?: Date): Promise<HabitResponseDto[]> {
+  async getHabits(
+    userId: string,
+    date?: Date,
+    today?: Date,
+  ): Promise<HabitResponseDto[]> {
     const targetDate = normalizeDate(date ?? new Date());
+    const currentDay = normalizeDate(today ?? new Date());
 
     const habits = (await this.prisma.habit.findMany({
       where: { userId },
@@ -130,9 +137,13 @@ export class HabitsService {
       },
     })) as any[];
 
-    const habitsDue = habits
-      .filter((habit) =>
-        isHabitDueOnDate(habit.frequency, habit.createdAt, targetDate),
+    const isOnce = (habit: any) => habit.frequency === TaskFrequency.ONCE;
+
+    const recurringDue = habits
+      .filter(
+        (habit) =>
+          !isOnce(habit) &&
+          isHabitDueOnDate(habit.frequency, habit.createdAt, targetDate),
       )
       .map((habit) => ({
         habit,
@@ -142,27 +153,65 @@ export class HabitsService {
           targetDate,
         ),
       }));
+    const onceHabits = habits.filter(isOnce);
 
     // Only load the entry of the current period for each due habit instead of
-    // the whole history.
+    // the whole history. A ONCE habit has a single period, from its start day.
+    const entryFilters = [
+      ...recurringDue.map(({ habit, searchDate }) => ({
+        habitId: habit.id,
+        date: searchDate,
+      })),
+      ...onceHabits.map((habit) => ({
+        habitId: habit.id,
+        date: { gte: normalizeDate(habit.createdAt) },
+      })),
+    ];
     const entries =
-      habitsDue.length > 0
+      entryFilters.length > 0
         ? await this.prisma.habitEntry.findMany({
-          where: {
-            OR: habitsDue.map(({ habit, searchDate }) => ({
-              habitId: habit.id,
-              date: searchDate,
-            })),
-          },
+          where: { OR: entryFilters },
           include: { subTasks: true },
         })
         : [];
-    const entryByHabitId = new Map(entries.map((e) => [e.habitId, e]));
+    const entriesByHabitId = new Map<string, typeof entries>();
+    for (const entry of entries) {
+      const list = entriesByHabitId.get(entry.habitId) ?? [];
+      list.push(entry);
+      entriesByHabitId.set(entry.habitId, list);
+    }
 
-    return habitsDue.map(({ habit, searchDate }) => {
-      const entryForResponse = entryByHabitId.get(habit.id) ?? {
+    const searchDateByHabitId = new Map(
+      recurringDue.map(({ habit, searchDate }) => [habit.id, searchDate]),
+    );
+
+    return habits.flatMap((habit) => {
+      const habitEntries = entriesByHabitId.get(habit.id) ?? [];
+      let entry: any;
+      let entryDate: Date;
+
+      if (isOnce(habit)) {
+        const onceEntry = pickOnceEntry(habitEntries);
+        const displayDay = getOnceDisplayDay(
+          habit.createdAt,
+          currentDay,
+          onceEntry,
+        );
+        if (displayDay.getTime() !== targetDate.getTime()) return [];
+        // A pending entry keeps the date it was created on; it is being shown
+        // on the day requested.
+        entry = onceEntry && { ...onceEntry, date: targetDate };
+        entryDate = targetDate;
+      } else {
+        const searchDate = searchDateByHabitId.get(habit.id);
+        if (!searchDate) return [];
+        entry = habitEntries[0];
+        entryDate = searchDate;
+      }
+
+      const entryForResponse = entry ?? {
         id: '',
-        date: searchDate,
+        date: entryDate,
         completed: false,
         completedAt: null,
         subTasks: this.sortSubTasks(habit.subTasks).map((st: any) => ({
@@ -174,7 +223,7 @@ export class HabitsService {
         })),
       };
 
-      return this.mapHabitToResponse(habit, entryForResponse);
+      return [this.mapHabitToResponse(habit, entryForResponse)];
     });
   }
 
@@ -209,10 +258,11 @@ export class HabitsService {
       targetDate,
     );
 
-    const existingEntry = await this.prisma.habitEntry.findUnique({
-      where: { habitId_date: { habitId, date: searchDate } },
-      include: { subTasks: true },
-    });
+    const existingEntry = await this.findCurrentEntry(
+      this.prisma,
+      habit,
+      targetDate,
+    );
 
     let updatedEntry;
 
@@ -224,6 +274,9 @@ export class HabitsService {
         data: {
           completed: nextCompleted,
           completedAt: nextCompleted ? new Date() : null,
+          ...(nextCompleted
+            ? await this.onceCompletionDate(habit, existingEntry, targetDate)
+            : {}),
         },
         include: { subTasks: true },
       });
@@ -273,10 +326,7 @@ export class HabitsService {
     );
 
     // Find or create the entry for this date
-    let entry = await this.prisma.habitEntry.findUnique({
-      where: { habitId_date: { habitId, date: searchDate } },
-      include: { subTasks: true },
-    });
+    let entry = await this.findCurrentEntry(this.prisma, habit, targetDate);
 
     if (!entry) {
       entry = await this.prisma.habitEntry.create({
@@ -341,6 +391,9 @@ export class HabitsService {
       data: {
         completed: allCompleted,
         completedAt: allCompleted ? new Date() : null,
+        ...(allCompleted
+          ? await this.onceCompletionDate(habit, entry, targetDate)
+          : {}),
       },
       include: { subTasks: true },
     });
@@ -353,10 +406,22 @@ export class HabitsService {
     habitId: string,
     dto: UpdateHabitDto,
     date?: Date,
+    today?: Date,
   ) {
-    await this.validateOwnership(userId, habitId);
+    const current = await this.validateOwnership(userId, habitId);
 
     const targetDate = normalizeDate(date ?? new Date());
+
+    // A habit that becomes a one-time task starts over today: what was done
+    // while it was recurring does not complete it.
+    const becomesOnce =
+      dto.frequency === TaskFrequency.ONCE &&
+      current.frequency !== TaskFrequency.ONCE;
+    const newStartDate = dto.date
+      ? normalizeDate(new Date(dto.date))
+      : becomesOnce
+        ? normalizeDate(today ?? new Date())
+        : undefined;
 
     const finalHabit = await this.prisma.$transaction(async (tx) => {
       const habit = await tx.habit.update({
@@ -367,7 +432,7 @@ export class HabitsService {
           priority: dto.priority,
           frequency: dto.frequency,
           // The habit's start day (see createHabit).
-          createdAt: dto.date ? normalizeDate(new Date(dto.date)) : undefined,
+          createdAt: newStartDate,
         },
       });
 
@@ -385,15 +450,7 @@ export class HabitsService {
         // The entry of the current period still points to the old template
         // subtasks; rebuild it keeping the completion state by title.
         // Past entries are historical snapshots and are left untouched.
-        const searchDate = getSearchDateForFrequency(
-          habit.frequency,
-          habit.createdAt,
-          targetDate,
-        );
-        const entry = await tx.habitEntry.findUnique({
-          where: { habitId_date: { habitId, date: searchDate } },
-          include: { subTasks: true },
-        });
+        const entry = await this.findCurrentEntry(tx, habit, targetDate);
 
         if (entry) {
           const completedTitles = new Set(
@@ -464,19 +521,11 @@ export class HabitsService {
       });
     });
 
-    const entry = await this.prisma.habitEntry.findUnique({
-      where: {
-        habitId_date: {
-          habitId,
-          date: getSearchDateForFrequency(
-            finalHabit.frequency,
-            finalHabit.createdAt,
-            targetDate,
-          ),
-        },
-      },
-      include: { subTasks: true },
-    });
+    const entry = await this.findCurrentEntry(
+      this.prisma,
+      finalHabit,
+      targetDate,
+    );
 
     return this.mapHabitToResponse(finalHabit, entry ?? undefined);
   }
@@ -487,6 +536,65 @@ export class HabitsService {
     return this.prisma.habit.delete({
       where: { id: habitId },
     });
+  }
+
+  /**
+   * The entry holding the habit's state on `targetDate`: the one of that
+   * period, or for a ONCE habit its only one, whatever its date.
+   */
+  private async findCurrentEntry(
+    client: Pick<PrismaService, 'habitEntry'>,
+    habit: { id: string; frequency: string; createdAt: Date },
+    targetDate: Date,
+  ) {
+    if (habit.frequency === TaskFrequency.ONCE) {
+      const entries = await client.habitEntry.findMany({
+        where: {
+          habitId: habit.id,
+          date: { gte: normalizeDate(habit.createdAt) },
+        },
+        include: { subTasks: true },
+      });
+      return pickOnceEntry(entries) ?? null;
+    }
+
+    return client.habitEntry.findUnique({
+      where: {
+        habitId_date: {
+          habitId: habit.id,
+          date: getSearchDateForFrequency(
+            habit.frequency,
+            habit.createdAt,
+            targetDate,
+          ),
+        },
+      },
+      include: { subTasks: true },
+    });
+  }
+
+  /**
+   * A ONCE habit is shown as completed on the day it was completed: moves its
+   * entry to that day. Recurring habits keep the date of their period.
+   */
+  private async onceCompletionDate(
+    habit: { id: string; frequency: string },
+    entry: { id: string; date: Date },
+    targetDate: Date,
+  ): Promise<{ date?: Date }> {
+    if (
+      habit.frequency !== TaskFrequency.ONCE ||
+      entry.date.getTime() === targetDate.getTime()
+    ) {
+      return {};
+    }
+
+    // Left over from when the habit was recurring: it would collide with the
+    // entry being moved.
+    await this.prisma.habitEntry.deleteMany({
+      where: { habitId: habit.id, date: targetDate, id: { not: entry.id } },
+    });
+    return { date: targetDate };
   }
 
   private buildSubTaskCreateData(subTasks: Array<{ title: string; orderId?: number | null }>) {

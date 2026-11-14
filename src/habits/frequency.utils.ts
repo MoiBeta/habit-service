@@ -9,6 +9,8 @@ export enum TaskFrequency {
   WEEKLY = 'WEEKLY',
   MONTHLY = 'MONTHLY',
   YEARLY = 'YEARLY',
+  /** Done a single time: shown on one day at a time until it is completed. */
+  ONCE = 'ONCE',
 }
 
 /**
@@ -16,6 +18,7 @@ export enum TaskFrequency {
  * returns the canonical entry date for that frequency period.
  *
  * - DAILY   → the target date itself
+ * - ONCE    → the target date itself (the day it is being completed on)
  * - WEEKLY  → the weekday of createdAt projected onto the week of targetDate
  * - MONTHLY → the day-of-month of createdAt in the month of targetDate
  * - YEARLY  → the day+month of createdAt in the year of targetDate
@@ -42,6 +45,9 @@ export function getSearchDateForFrequency(
  * Returns true only when targetDate is the day this habit is due,
  * given its frequency and creation date. A habit is never due before the
  * day it starts.
+ *
+ * A ONCE habit is due every day from its start day until it is completed; the
+ * caller checks its completion (see pickOnceEntry and getOnceDisplayDay).
  */
 export function isHabitDueOnDate(
   frequency: string,
@@ -58,6 +64,36 @@ export function isHabitDueOnDate(
     targetDate,
   );
   return searchDate.getTime() === normalizeDate(targetDate).getTime();
+}
+
+/**
+ * The entry that holds the state of a ONCE habit, out of its entries dated on
+ * or after its start day: the completed one if there is any (the earliest),
+ * otherwise the latest, which carries the subtask progress.
+ */
+export function pickOnceEntry<T extends { date: Date; completed: boolean }>(
+  entries: T[],
+): T | undefined {
+  const sorted = [...entries].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
+  return sorted.find((e) => e.completed) ?? sorted[sorted.length - 1];
+}
+
+/**
+ * The only day a ONCE habit is shown on: the day it was completed, or while it
+ * is pending, the user's current day (its start day if that is still to come),
+ * so a habit left undone moves to the next day.
+ */
+export function getOnceDisplayDay(
+  habitCreatedAt: Date,
+  today: Date,
+  entry?: { date: Date; completed: boolean },
+): Date {
+  if (entry?.completed) return normalizeDate(entry.date);
+  const start = normalizeDate(habitCreatedAt);
+  const current = normalizeDate(today);
+  return start > current ? start : current;
 }
 
 // ---------------------------------------------------------------------------
