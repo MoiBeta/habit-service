@@ -27,7 +27,7 @@ flowchart LR
     fcm -- "push" --> app
 ```
 
-Both services run as Docker containers on an AWS Lightsail instance, with a managed PostgreSQL on Supabase.
+Both services run as Docker containers on an AWS Lightsail instance, with a managed PostgreSQL on Supabase. A Caddy reverse proxy is the only entry point: it terminates HTTPS and forwards each subdomain to its service, whose ports are not exposed to the internet.
 
 This service does not issue tokens. It verifies the access tokens signed by `auth-service` with the shared `JWT_SECRET`, and calls `auth-service` over an internal endpoint to confirm that a user exists before creating data for them.
 
@@ -37,7 +37,7 @@ NestJS 11, TypeScript, Prisma 6, PostgreSQL, Passport (JWT), `@nestjs/schedule`,
 
 ## API
 
-Interactive documentation is served at `/docs` (Swagger UI). Every endpoint except the health check requires an access token.
+Interactive documentation (Swagger UI) is live at [habits.selfanvil.app/docs](https://habits.selfanvil.app/docs). Every endpoint except the health check requires an access token.
 
 | Method | Path | Description |
 |---|---|---|
@@ -127,5 +127,4 @@ The suite covers the frequency rules, the habit logic, the reminder scheduler an
 
 ## Roadmap
 
-- HTTPS behind a domain, with the service ports closed to the internet.
 - Fix the existing lint errors and enforce lint in CI.
