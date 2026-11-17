@@ -7,6 +7,7 @@ The habits and reminders service behind [SelfAnvil](https://github.com/MoiBeta/A
 | [Auto-Admin-App](https://github.com/MoiBeta/Auto-Admin-App) | Flutter client for Android |
 | [auth-service](https://github.com/MoiBeta/auth-service) | NestJS service for accounts and JWT sessions |
 | **habit-service** (this one) | NestJS service for habits, subtasks and reminders |
+| [selfanvil-infra](https://github.com/MoiBeta/selfanvil-infra) | Docker Compose, reverse proxy and deployment |
 
 ## Architecture
 
