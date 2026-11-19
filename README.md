@@ -1,10 +1,10 @@
 # habit-service
 
-The habits and reminders service behind [SelfAnvil](https://github.com/MoiBeta/Auto-Admin-App), a tasks and habits app. It stores habits, subtasks and daily progress, and sends push reminders at each user's local time.
+The habits and reminders service behind [SelfAnvil](https://github.com/MoiBeta/SelfAnvil), a tasks and habits app. It stores habits, subtasks and daily progress, and sends push reminders at each user's local time.
 
 | Repository | What it is |
 |---|---|
-| [Auto-Admin-App](https://github.com/MoiBeta/Auto-Admin-App) | Flutter client for Android |
+| [SelfAnvil](https://github.com/MoiBeta/SelfAnvil) | Flutter client for Android |
 | [auth-service](https://github.com/MoiBeta/auth-service) | NestJS service for accounts and JWT sessions |
 | **habit-service** (this one) | NestJS service for habits, subtasks and reminders |
 | [selfanvil-infra](https://github.com/MoiBeta/selfanvil-infra) | Docker Compose, reverse proxy and deployment |
